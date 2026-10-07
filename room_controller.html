@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Room MQTT Controller</title>
+
+    <!-- MQTT.js -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f2f2f2;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 18px;
+            margin-bottom: 18px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        }
+
+        label {
+            display: block;
+            margin-top: 12px;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #bbb;
+            border-radius: 7px;
+            font-size: 15px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            margin-top: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 17px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        #connectButton {
+            background: #1976d2;
+            color: white;
+        }
+
+        #resetButton {
+            background: #d32f2f;
+            color: white;
+            font-size: 20px;
+            padding: 18px;
+        }
+
+        #resetButton:disabled {
+            background: #aaa;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            background: #ddd;
+        }
+
+        .connected {
+            background: #c8e6c9;
+            color: #1b5e20;
+        }
+
+        .disconnected {
+            background: #ffcdd2;
+            color: #b71c1c;
+        }
+
+        .log {
+            background: #111;
+            color: #00ff66;
+            padding: 12px;
+            height: 220px;
+            overflow-y: auto;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>ROOM MQTT CONTROLLER</h1>
+
+    <!-- CONNECTION SETTINGS -->
+    <div class="card">
+
+        <h2>MQTT Connection</h2>
+
+        <label>Broker Address</label>
+        <input
+            id="broker"
+            value="h1aa1a8a.ala.asia-southeast1.emqxsl.com"
+        >
+
+        <label>WebSocket Port</label>
+        <input
+            id="port"
+            value="8084"
+            type="number"
+        >
+
+        <label>Username</label>
+        <input
+            id="username"
+            value="Arduino_R4"
+        >
+
+        <label>Password</label>
+        <input
+            id="password"
+            type="password"
+            placeholder="Enter EMQX password"
+        >
+
+        <label>MQTT Topic</label>
+        <input
+            id="topic"
+            value="test/arduino"
+        >
+
+        <label>Client ID</label>
+        <input
+            id="clientId"
+            value=""
+        >
+
+        <button id="connectButton" onclick="connectMQTT()">
+            CONNECT
+        </button>
+
+    </div>
+
+
+    <!-- STATUS -->
+    <div class="card">
+
+        <h2>Connection Status</h2>
+
+        <div id="status" class="status disconnected">
+            DISCONNECTED
+        </div>
+
+    </div>
+
+
+    <!-- CONTROL -->
+    <div class="card">
+
+        <h2>Room Control</h2>
+
+        <button
+            id="resetButton"
+            onclick="sendReset()"
+            disabled
+        >
+            RESET AUTOMATION
+        </button>
+
+    </div>
+
+
+    <!-- MESSAGE DISPLAY -->
+    <div class="card">
+
+        <h2>MQTT Messages</h2>
+
+        <div id="log" class="log">
+Waiting for connection...
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+    let mqttClient = null;
+
+
+    // Generate a unique MQTT client ID
+    document.getElementById("clientId").value =
+        "Phone_" + Math.random().toString(16).substring(2, 10);
+
+
+    function logMessage(message) {
+
+        const log = document.getElementById("log");
+
+        const time = new Date().toLocaleTimeString();
+
+        log.textContent +=
+            "\n[" + time + "] " + message;
+
+        log.scrollTop = log.scrollHeight;
+    }
+
+
+    function setStatus(message, connected) {
+
+        const status = document.getElementById("status");
+
+        status.textContent = message;
+
+        if (connected) {
+
+            status.className = "status connected";
+
+        } else {
+
+            status.className = "status disconnected";
+        }
+    }
+
+
+    function connectMQTT() {
+
+        const broker =
+            document.getElementById("broker").value.trim();
+
+        const port =
+            document.getElementById("port").value.trim();
+
+        const username =
+            document.getElementById("username").value.trim();
+
+        const password =
+            document.getElementById("password").value;
+
+        const topic =
+            document.getElementById("topic").value.trim();
+
+        const clientId =
+            document.getElementById("clientId").value.trim();
+
+
+        if (!broker || !port || !username || !password || !topic) {
+
+            alert("Please fill in all required fields.");
+
+            return;
+        }
+
+
+        // Disconnect an existing connection
+        if (mqttClient) {
+
+            try {
+                mqttClient.end();
+            } catch (e) {
+                console.log(e);
+            }
+        }
+
+
+        // EMQX Serverless:
+        // WSS = Secure WebSocket
+        // Port = 8084
+        // Path = /mqtt
+
+        const brokerURL =
+            "wss://" + broker + ":" + port + "/mqtt";
+
+
+        logMessage("Connecting...");
+        logMessage("Broker: " + brokerURL);
+
+
+        mqttClient = mqtt.connect(brokerURL, {
+
+            clientId: clientId,
+
+            username: username,
+
+            password: password,
+
+            clean: true,
+
+            connectTimeout: 10000,
+
+            reconnectPeriod: 3000
+
+        });
+
+
+        // Connection successful
+        mqttClient.on("connect", function () {
+
+            setStatus("CONNECTED", true);
+
+            logMessage("MQTT connection successful.");
+
+            logMessage("Subscribing to: " + topic);
+
+
+            mqttClient.subscribe(topic, { qos: 0 }, function(error) {
+
+                if (error) {
+
+                    logMessage(
+                        "Subscription error: " + error.message
+                    );
+
+                    return;
+                }
+
+                logMessage(
+                    "Subscribed to: " + topic
+                );
+
+                document.getElementById("resetButton").disabled = false;
+
+            });
+
+        });
+
+
+        // Message received
+        mqttClient.on("message", function(topic, payload) {
+
+            const message =
+                payload.toString();
+
+            logMessage(
+                "MESSAGE RECEIVED"
+            );
+
+            logMessage(
+                "Topic: " + topic
+            );
+
+            logMessage(
+                "Message: " + message
+            );
+
+        });
+
+
+        // Connection error
+        mqttClient.on("error", function(error) {
+
+            logMessage(
+                "ERROR: " + error.message
+            );
+
+            setStatus("CONNECTION ERROR", false);
+
+            document.getElementById("resetButton").disabled = true;
+
+        });
+
+
+        // Connection closed
+        mqttClient.on("close", function() {
+
+            setStatus("DISCONNECTED", false);
+
+            document.getElementById("resetButton").disabled = true;
+
+            logMessage("MQTT connection closed.");
+
+        });
+
+
+        // Reconnecting
+        mqttClient.on("reconnect", function() {
+
+            setStatus("RECONNECTING...", false);
+
+            logMessage("Trying to reconnect...");
+
+        });
+
+    }
+
+
+    function sendReset() {
+
+        const topic =
+            document.getElementById("topic").value.trim();
+
+
+        if (!mqttClient || !mqttClient.connected) {
+
+            alert("MQTT is not connected.");
+
+            return;
+        }
+
+
+        const payload = "RESET";
+
+
+        mqttClient.publish(
+            topic,
+            payload,
+            { qos: 0, retain: false },
+            function(error) {
+
+                if (error) {
+
+                    logMessage(
+                        "Publish error: " + error.message
+                    );
+
+                } else {
+
+                    logMessage(
+                        "RESET SENT"
+                    );
+
+                    logMessage(
+                        "Topic: " + topic
+                    );
+
+                    logMessage(
+                        "Payload: RESET"
+                    );
+
+                }
+
+            }
+        );
+
+    }
+
+</script>
+
+</body>
+</html>
